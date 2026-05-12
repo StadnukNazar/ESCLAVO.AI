@@ -13,167 +13,140 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = 3000;
 
-// Initialize OpenAI/Groq client
 let aiClient: OpenAI | null = null;
 function getAIClient() {
   if (!aiClient) {
     const cleanKey = (key?: string) => {
       if (!key) return "";
-      // Strip potential quotes and invisible characters
       return key.trim().replace(/^["']+|["']+$/g, "").replace(/[\u200B-\u200D\uFEFF]/g, "");
     };
-
     const groqKey = cleanKey(process.env.GROQ_API_KEY);
     const openaiKey = cleanKey(process.env.OPENAI_API_KEY);
     const geminiKey = cleanKey(process.env.GEMINI_API_KEY);
-
-    // Ignore placeholder values from .env.example
     const isPlaceholder = (key?: string) => !key || key.includes("MY_") || key === "";
 
     let apiKey = "";
     let baseURL = undefined;
-
     if (!isPlaceholder(groqKey)) {
-      apiKey = groqKey!;
-      baseURL = "https://api.groq.com/openai/v1";
+      apiKey = groqKey!; baseURL = "https://api.groq.com/openai/v1";
       console.log("✅ Using GROQ API");
     } else if (!isPlaceholder(openaiKey)) {
-      apiKey = openaiKey!;
-      console.log("✅ Using OpenAI API");
+      apiKey = openaiKey!; console.log("✅ Using OpenAI API");
     } else if (!isPlaceholder(geminiKey)) {
-      apiKey = geminiKey!;
-      console.log("✅ Using Gemini API (OpenAI compatibility)");
+      apiKey = geminiKey!; console.log("✅ Using Gemini API");
     }
-
-    if (!apiKey) {
-      throw new Error("🚨 API Key is missing! Please set GROQ_API_KEY in Secrets or .env file.");
-    }
-    
-    aiClient = new OpenAI({ 
-      apiKey,
-      baseURL
-    });
+    if (!apiKey) throw new Error("🚨 API Key is missing! Please set GROQ_API_KEY in .env file.");
+    aiClient = new OpenAI({ apiKey, baseURL, timeout: 30_000, maxRetries: 3 });
   }
   return aiClient;
 }
 
 app.use(express.json());
 
-const SYSTEM_PROMPT = `You are "ESCLAVE.AI", a premium, futuristic JavaScript & TypeScript training system. 
-You don't just answer questions; you build engineers.
+const DIFFICULTY_GUIDE: Record<string, string> = {
+  EASY: "EASY — Single word or one-liner answers. Beginner level. Example: 'What keyword declares a constant?' → 'const'. The question must be trivially simple.",
+  NORMAL: "NORMAL — Requires understanding a concept. Intermediate level. Example: 'Write a debounce function' or 'Explain event bubbling'. Answer is 3-8 lines or a clear explanation.",
+  HARDCORE: "HARDCORE — Complex real-world problem. Advanced level. Example: 'Implement Promise.all from scratch' or 'Write a deep clone handling circular refs'. Answer requires 10+ lines and deep expertise."
+};
 
-PERSONALITY:
-- Technical, precise, highly motivating.
-- Use engineering metaphors (e.g., "Memory allocation is like...", "The Event Loop is a high-speed conveyor belt...").
-- Always brief yet deep. Avoid generic filler.
+const SYSTEM_PROMPT = `You are "ESCLAVE.AI", a premium JavaScript & TypeScript training system. You build engineers, not just answer questions.
 
-LEARNING ARCHITECTURE:
-1. **Conceptual Bridge**: Briefly explain the "Why" before the "What".
-2. **Code Implementation**: Provide high-performance, modern ES6+ examples.
-3. **The Challenge**: Every lesson MUST end with a practical task.
-   You MUST use the EXACT format: [TASK: Difficulty | Question | Correct Answer Snippet]
-   Difficulties: EASY, NORMAL, HARDCORE.
-   Example: [TASK: EASY | What is the keyword to declare a constant in ES6? | const]
-   IMPORTANT: If the user specifically asks for a task or clicks a difficulty button, start your response with the [TASK:...] tag before any other text.
-   If the user's request for a task is too vague (e.g., "Give me a task"), ask what topic they want to practice before providing the [TASK:...] tag.
-   The tag "TASK" must ALWAYS be in English.
+PERSONALITY: Technical, precise, motivating. Use engineering metaphors. Brief yet deep.
 
-IF USER MAKES A MISTAKE:
-Don't just give the answer. Provide a hint first, then analyze the logic flaw.
+FORMAT: End lessons with: [TASK: DIFFICULTY | Question | Answer]
+The word TASK must always be in English. Everything else in the user's language.
 
-LANGUAGE RESTRAINT:
-- Strictly follow the user's selected language for all conversational content. 
-- NEVER translate to Chinese, Japanese, or any language other than the one specified by the user.
-- If the requested language is Ukrainian, use Ukrainian ONLY.
-- Default to English if the language is unknown, but NEVER use Chinese.
-- DO NOT use Chinese characters under any circumstances.
-- TECHNICAL TAGS like [TASK:...], [SUGGESTIONS:...] MUST stay in English regardless of the output language.
-- Ensure all technical terms are explained in the user's current language.
+IF USER MAKES A MISTAKE: Give a hint first, then explain the flaw.
 
-RESTRICTIONS:
-- Topic: JavaScript, TypeScript, Node.js, Web APIs, Architecture.
-- Tone: Senior Lead Developer.`;
+LANGUAGE: Use ONLY the user's specified language. Never Chinese. Tags stay in English.
 
-// API Route for AI Chat
+TOPIC: JavaScript, TypeScript, Node.js, Web APIs, Architecture only. Tone: Senior Lead Developer.`;
+
 app.post("/api/chat", async (req, res) => {
   try {
-    const { message, history = [], isDebug, language = 'Ukrainian', settings } = req.body;
+    const { message, history = [], isDebug, language = 'Ukrainian', settings, isForPractice = false } = req.body;
     const client = getAIClient();
 
     const challengesEnabled = settings?.challengesEnabled !== false;
-    const difficulty = (settings?.difficulty || 'NORMAL').toUpperCase();
+    const rawDiff = (settings?.difficulty || 'normal').toLowerCase();
+    // Map 'hard' → 'HARDCORE', 'easy' → 'EASY', anything else → 'NORMAL'
+    const difficulty = rawDiff === 'hard' ? 'HARDCORE' : rawDiff === 'easy' ? 'EASY' : 'NORMAL';
     const autoTasks = settings?.autoTasks !== false;
+    const diffGuide = DIFFICULTY_GUIDE[difficulty];
 
     let dynamicInstructions = "";
-    if (!challengesEnabled) {
-      dynamicInstructions = "\n- IMPORTANT: The user has DISABLED challenges. Do NOT generate [TASK:...] tags unless the user EXPLICITLY asks for a new task.";
+
+    if (isForPractice) {
+      dynamicInstructions = `
+CRITICAL: User clicked the "${difficulty}" button. Generate ONLY a [TASK: ${difficulty} | question | answer] tag. No text before it.
+Difficulty rules:
+${diffGuide}
+The question MUST match exactly the ${difficulty} complexity. Not easier. Not harder.`;
+
+    } else if (!challengesEnabled) {
+      dynamicInstructions = `
+Challenges are DISABLED by the user.
+- Do NOT generate [TASK:...] tags at all.
+- At the end of every response, add one short friendly sentence in ${language} suggesting they enable tasks in settings to get practice.
+  Vary the wording each time. Examples:
+  Ukrainian: "💡 Увімкніть завдання в налаштуваннях — і я одразу дам вам практику!"
+  English: "💡 Enable challenges in settings to get hands-on practice tasks!"
+  Keep it to one sentence, casual and motivating.`;
+
     } else {
-      dynamicInstructions = `\n- The user has ENABLED challenges. Generate tasks with [TASK:${difficulty} | ... | ...] format.`;
-      if (autoTasks) {
-        dynamicInstructions += "\n- Proactively include a task in almost every response to keep the user engaged.";
-      } else {
-        dynamicInstructions += "\n- Only include a task if the user asks for one or if it's the end of a major explanation.";
-      }
+      dynamicInstructions = `
+Current difficulty setting: ${difficulty}
+Difficulty rules to follow strictly:
+${diffGuide}
+ALWAYS use [TASK: ${difficulty} | question | answer] — never a different difficulty level.
+${autoTasks ? "Include a task in almost every response." : "Include a task only at the end of major explanations or when asked."}`;
     }
 
     const historyArray = Array.isArray(history) ? history : [];
     const messages = [
-      { role: "system", content: `${SYSTEM_PROMPT}${dynamicInstructions}\n\nIMPORTANT: Use ${language} for ALL responses. Do NOT use any other language.` },
+      { role: "system", content: `${SYSTEM_PROMPT}\n\n${dynamicInstructions}\n\nRespond in ${language} only.` },
       ...historyArray.slice(-8),
-      { role: "user", content: isDebug ? `Verify this code and explain in ${language}:\n${message}` : message }
+      { role: "user", content: isDebug ? `Verify this code in ${language}:\n${message}` : message }
     ];
 
     const model = process.env.GROQ_API_KEY ? "llama-3.3-70b-versatile" : "gpt-4o";
-
-    const response = await client.chat.completions.create({
-      model: model,
-      messages: messages as any,
-      temperature: 0.7,
-    });
-
+    const response = await client.chat.completions.create({ model, messages: messages as any, temperature: 0.7 });
     res.json({ text: response.choices[0].message.content });
+
   } catch (error: any) {
     console.error("AI API Error:", error);
     res.status(500).json({ error: error.message || "Failed to fetch from AI provider" });
   }
 });
 
-// API Route for Task Verification
 app.post("/api/verify", async (req, res) => {
   try {
     const { question, correctAnswer, userAnswer, difficulty, language = 'Ukrainian' } = req.body;
     const client = getAIClient();
 
-    const verifyPrompt = `
-    You are an AI JavaScript Mentor. Your task is to verify the user's solution.
-    Language of feedback, question, and answer MUST BE: ${language}.
-    Task difficulty level: ${difficulty || 'NORMAL'}.
-    
-    TASK TO EVALUATE: ${question}
-    REFERENCE ANSWER: ${correctAnswer}
-    USER ANSWER: ${userAnswer}
+    const verifyPrompt = `You are verifying a JavaScript task answer. Language: ${language}. Difficulty: ${difficulty || 'NORMAL'}.
 
-    RESPONSE REQUIREMENTS (JSON ONLY):
-    {
-      "isCorrect": true/false, 
-      "feedback": "Your comment here in ${language} (praise or explain the error).", 
-      "xpAwarded": amount of XP (0 to 300. STRICT REWARD SCALE:
-        - EASY: 40-60 XP
-        - NORMAL: 100-150 XP
-        - HARDCORE: 250-300 XP
-        - Return 0 if the answer is incorrect)
-    }
-    `;
+TASK: ${question}
+CORRECT ANSWER: ${correctAnswer}
+USER ANSWER: ${userAnswer}
+
+Accept semantically correct answers even if phrasing differs. Accept functionally equivalent code.
+
+Respond ONLY with JSON:
+{
+  "isCorrect": true or false,
+  "feedback": "1-2 sentences in ${language}. Praise if correct, explain mistake if wrong.",
+  "xpAwarded": 0 if wrong. If correct: EASY=50, NORMAL=120, HARDCORE=280
+}`;
 
     const model = process.env.GROQ_API_KEY ? "llama-3.3-70b-versatile" : "gpt-4o";
-
     const response = await client.chat.completions.create({
-      model: model,
+      model,
       messages: [
-        { role: "system", content: `You are a technical mentor. You must respond ONLY in JSON in the requested language: ${language}.` },
+        { role: "system", content: `Strict but fair JS mentor. JSON only. Language: ${language}.` },
         { role: "user", content: verifyPrompt }
       ],
-      temperature: 0.2,
+      temperature: 0.1,
       response_format: { type: "json_object" }
     });
 
@@ -185,25 +158,16 @@ app.post("/api/verify", async (req, res) => {
   }
 });
 
-// Vite middleware setup
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
+    const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+    app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
-
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+  app.listen(PORT, "0.0.0.0", () => console.log(`Server running on http://localhost:${PORT}`));
 }
 
 startServer();
