@@ -29,3 +29,5 @@
    ```bash
    git clone <your-repository-link>
    cd esclavo-ai
+
+   Запуск: npm install ➔ Додати ключ у .env ➔ npm run dev
