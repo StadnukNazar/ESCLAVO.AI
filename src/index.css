@@ -1,0 +1,96 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --animate-scanline: scanline 8s linear infinite;
+  --animate-glow: glow 4s ease-in-out infinite;
+  --animate-float: float 6s ease-in-out infinite;
+
+  @keyframes scanline {
+    0% { transform: translateY(-100%); }
+    100% { transform: translateY(1000%); }
+  }
+  @keyframes glow {
+    0%, 100% { filter: drop-shadow(0 0 5px rgba(37,99,235,0.2)); }
+    50% { filter: drop-shadow(0 0 20px rgba(37,99,235,0.4)); }
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+}
+
+.glass-card {
+  @apply bg-[#0d0d0d]/80 backdrop-blur-xl border border-white/5 shadow-[0_8px_32px_rgba(0,0,0,0.4)];
+}
+
+.neon-border {
+  @apply relative overflow-hidden;
+}
+
+.neon-border::before {
+  content: '';
+  @apply absolute inset-0 border border-blue-500/20 rounded-[inherit] pointer-events-none;
+  box-shadow: inset 0 0 15px rgba(37,99,235,0.1);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 5px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  @apply bg-white/5 rounded-full hover:bg-white/10 transition-colors;
+}
+
+@layer base {
+  body {
+    @apply bg-neutral-950 text-neutral-100 antialiased;
+  }
+
+  .texture-noise {
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+    opacity: 0.03;
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    will-change: transform;
+  }
+
+  .texture-grid {
+    background-image: linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    background-size: 50px 50px;
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+  }
+
+  .markdown-body h1 { @apply text-2xl font-black mb-4 mt-6 text-white uppercase tracking-tight border-b-2 border-blue-500/20 pb-2 flex items-center gap-2; }
+  .markdown-body h2 { @apply text-xl font-bold mb-3 mt-5 text-blue-400 flex items-center gap-2; }
+  .markdown-body p { @apply text-base leading-relaxed mb-4 text-neutral-300; }
+  .markdown-body pre { @apply bg-black/80 border border-neutral-800 rounded-xl p-4 my-4 overflow-x-auto shadow-2xl relative; }
+  .markdown-body code { @apply font-mono text-xs px-1.5 py-0.5 rounded bg-neutral-800 text-blue-300 border border-neutral-700; }
+  .markdown-body pre code { @apply bg-transparent p-0 text-blue-100 border-none; }
+  .markdown-body ul, .markdown-body ol { @apply mb-4 pl-6 space-y-2; }
+  .markdown-body li { @apply list-disc text-neutral-300; }
+  .markdown-body strong { @apply font-bold text-white; }
+  .markdown-body hr { @apply border-neutral-800 my-6; }
+  .markdown-body blockquote { @apply border-l-4 border-blue-500 bg-blue-500/5 px-4 py-2 my-4 italic rounded-r text-neutral-400; }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
